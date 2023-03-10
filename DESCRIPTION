@@ -1,0 +1,12 @@
+Package: MetaEnrichmentAnalysis
+Type: Package
+Title: Meta-analytic enrichment analysis for multi-omics data
+Version: 0.1.0
+Author: carushi
+Maintainer: carushi <1845273+carushi@users.noreply.github.com>
+Description:
+License: MIT
+Encoding: UTF-8
+LazyData: true
+Depends: 
+    R (>= 4.1.3)
