@@ -96,13 +96,12 @@ plotMDplot <- function(cpm, fc, fdr, output_header, threshold=0.05) {
 
 
 #' @import ggplot2 cowplot
-plotVolcano <- function(gene_list, fc, fdr, output_header, threshold=0.05, xrange=NULL, yrange=NULL) {
+plotVolcano <- function(gene_list, fc, fdr, output_header, threshold=0.05, xrange=NULL, yrange=NULL, gene_style='Refseq') {
     palette <- getColorPalette()
     df <- data.frame(Gene=gene_list, FDR=-log10(fdr), Fc=fc, 
                      Significance=sapply(fdr, getSignificanceLabels, threshold=threshold),
                      Change=sapply(fc, getFoldChangeLabels))
-    gene_style = 'Refseq'
-    df <- addRefseqDescription(df, gene_style, keep_gene_list_column=TRUE)
+    df <- addGeneDescription(df, gene_style, keep_gene_list_column=TRUE)
     df <- cbind(df, SignificantChange=getSignificantChange(df$Significance, df$Change))
     g <- ggplot(df, aes(x=Fc, y=FDR, color=SignificantChange, alpha=Significance))
     g <- g+geom_point()
@@ -115,6 +114,7 @@ plotVolcano <- function(gene_list, fc, fdr, output_header, threshold=0.05, xrang
     plot(g)
     dev.off()
     if (any(colnames(df) == 'Symbol')) {
+        df$Symbol[df$'Symbol' == '<NA>'] <- '-'
         g <- ggplot()
         g <- g+geom_point(data=df, aes(x=Fc, y=FDR, color=SignificantChange), color='grey')
         g <- g+geom_text(data=subset(df, df$Significance == 'Significant'), aes(x=Fc, y=FDR, label=Symbol, color=SignificantChange))
@@ -137,17 +137,20 @@ plotVolcano <- function(gene_list, fc, fdr, output_header, threshold=0.05, xrang
     return(count_data)
 }
 
-plotVolcanoGeneSet <- function(gene_list, fc, fdr, output_header, gene_set_list, threshold=0.05, xrange=NULL, yrange=NULL) {
+plotVolcanoGeneSet <- function(gene_list, fc, fdr, output_header, gene_set_list, gene_style='Refseq', threshold=0.05, xrange=NULL, yrange=NULL, organism='mouse', verbose=TRUE) {
     palette <- getColorPalette()
     df <- data.frame(Gene=gene_list, FDR=-log10(fdr), Fc=fc, 
                      Significance=sapply(fdr, getSignificanceLabels, threshold=threshold),
                      Change=sapply(fc, getFoldChangeLabels))
-    gene_style = 'Refseq'
-    df <- addRefseqDescription(df, gene_style, keep_gene_list_column=TRUE)
+    df <- addGeneDescription(df, gene_style, keep_gene_list_column=TRUE)
     df$Symbol <- sapply(df$Symbol, toupper)
     df <- cbind(df, SignificantChange=getSignificantChange(df$Significance, df$Change))
     for (gene_set_series in gene_set_list) {
-        symbol_vectors <- extractGeneSet(gene_set_series)
+        symbol_vectors <- extractGeneSet(gene_set_series, (organism=='mouse'))
+        if (verbose) {
+            print(c('---', gene_set_series))
+            print(symbol_vectors)
+        }
         for (gene_set_file in names(symbol_vectors)) {
             header <- gsub('\\.txt', '', gsub('geneset_', '', gene_set_file))
             g <- ggplot(df, aes(x=Fc, y=FDR, alpha=Significance))
@@ -175,6 +178,8 @@ plotVolcanoGeneSet <- function(gene_list, fc, fdr, output_header, gene_set_list,
             dev.off()
             stats_table <- .countChangeType(df, 'all')
             stats_table <- rbind(stats_table, .countChangeType(df[df$Symbol %in% symbol_vectors[[gene_set_file]],], gene_set_series))
+            print(stats_table)
+            write.table(stats_table, paste0('sigchange_', output_header, '_', gene_set_series, '_', header, '.txt'))
             stats_table <- stats_table[stats_table[,'Var1'] != 'neutral',]
             pdf(paste0('barplot_', output_header, "_", gene_set_series, "_", header, ".pdf"))
             g <- ggplot(stats_table, aes(x = data, y = Freq, fill = Var1)) +
@@ -183,7 +188,6 @@ plotVolcanoGeneSet <- function(gene_list, fc, fdr, output_header, gene_set_list,
             g <- g+theme_classic()
             plot(g)
             dev.off()
-            write.table(stats_table, paste0('sigchange_', output_header, '_', gene_set_series, '_', header, '.txt'))
         }
     }
 }

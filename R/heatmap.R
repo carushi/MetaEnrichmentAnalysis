@@ -1,20 +1,5 @@
-#' @param matrix_file
-#' @param design_file
-#' @import ggplot2 ComplexHeatmap reshape2 viridis cowplot stringr
-
-LYSOSOME = '/home/rkawaguchi/project/GTP_RNA_seq/aws/Liver_data/ann/gene_set/lysosome/'
-AUTOPHAGY = '/home/rkawaguchi/project/GTP_RNA_seq/aws/Liver_data/ann/gene_set/autophagy/'
-
-# colnames(mat) <- c("E617_1", "E617_2", "E617_3",  "E615_1", "E615_2", "E615_3","E617_4", "E617_5", "E617_6", "E615_4", "E615_5", "E615_6")
-# mat <- mat[,c(1:3, 7:9, 4:6, 10:12)]
-# annot[,1] = "FL"
-# annot[c(1:3, 7:9),1] = "WT"
-# annot[,2] = "DMSO"
-# annot[c(1:6),2] = "guanosine"
-# col = list(Genot=c("WT"="blue", "FL"="red"), Cond=c("guanosine"="black", "DMSO"="gray"))
-
-library(ggplot2)
-library(stringr)
+require(ggplot2)
+require(stringr)
 
 groupAverage <- function(mat, design) {
     if (length(unique(design$Group)) == dim(mat)[1]) return(NULL)
@@ -248,7 +233,7 @@ genesetComparison <- function(mat, design, output_prefix, dir, col, log10_flag, 
         if (fname != 'all') {
             gene_vector <- read.table(file.path(dir, fname), header=T, stringsAsFactors=F)[,1]
             header <- gsub('\\.txt', '', gsub('geneset_', '', fname))
-            subset_mat <- addRefseqDescription(cbind(rownames(mat), mat), gene_style='Refseq')
+            subset_mat <- addGeneDescription(cbind(rownames(mat), mat), gene_style='Refseq')
             subset_mat <- subset_mat[toupper(subset_mat$Symbol) %in% toupper(gene_vector),]
             subset_mat <- subset_mat[!duplicated(subset_mat$Symbol),]
             rownames(subset_mat) <- subset_mat$Symbol

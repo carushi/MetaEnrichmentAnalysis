@@ -1,7 +1,7 @@
 
 #' @import pathview
 
-plotPathview <- function(map, fc_df, output_prefix, gene_style, cpd)
+plotPathview <- function(map, fc_df, output_prefix, gene_style, cpd, spe)
 {
     for (plot_type in c('kegg_native', 'graphviz')) {
         if (plot_type == 'kegg_native') {
@@ -14,29 +14,30 @@ plotPathview <- function(map, fc_df, output_prefix, gene_style, cpd)
             extension <- "pdf"
         }
         if (gene_style == "Refseq" || nchar(gene_style) == 0) {
-            pv.out <- pathview(gene.data = fc_df, gene.idtype = "REFSEQ", cpd.data = cpd, pathway.id = map, species = "mmu", out.suffix = map, keys.align = "y",
+            pv.out <- pathview(gene.data = fc_df, gene.idtype = "REFSEQ", cpd.data = cpd, pathway.id = map, species = spe, out.suffix = map, keys.align = "y",
                 kegg.native = kegg, match.data = T, key.pos = "topright", same.layer=layer)
         } else {
-            pv.out <- pathview(gene.data = fc_df, gene.idtype = "ENSEMBL", cpd.data = cpd, pathway.id = map, species = "mmu", out.suffix = map, keys.align = "y",
+            pv.out <- pathview(gene.data = fc_df, gene.idtype = "ENSEMBL", cpd.data = cpd, pathway.id = map, species = spe, out.suffix = map, keys.align = "y",
                 kegg.native = kegg, match.data = T, key.pos = "topright", same.layer=layer)
         }
         output_file <- paste(output_prefix, "_", map, ".", extension, sep="")
-        system(paste("mv ", paste(paste0("mmu", map), map, extension, sep="."), output_file))
+        system(paste("mv ", paste(paste0(spe, map), map, extension, sep="."), output_file))
         system('sleep 0.01')
     }
 }
 
-plotKEGGPathway <- function(fc, output_prefix, gene_style, kegg_target_file, all=FALSE, cpd=NULL)
+plotKEGGPathway <- function(fc, output_prefix, gene_style, kegg_target_file, all=FALSE, cpd=NULL, species='mmu')
 {
     id_list <- read.table(kegg_target_file, header=F, colClasses=c("character", "character"), sep=" ")[,2]
     fc_df <- data.frame(FC=fc)
+    rownames(fc_df) <- names(fc)
     for (id in id_list) {
-        plotPathview(id, fc_df, output_prefix, gene_style, cpd)
+        plotPathview(id, fc_df, output_prefix, gene_style, cpd, species)
     }
 }
 
 #' @import clusterProfiler
-computeKEGGEnrichment <- function(df, output_prefix, kegg_threshold=0.05)
+computeKEGGEnrichment <- function(df, output_prefix, spe, kegg_threshold=0.05)
 {
     background <- unique(df$Entrez)
     for (change in c("up", "down", "change")) {
@@ -54,7 +55,7 @@ computeKEGGEnrichment <- function(df, output_prefix, kegg_threshold=0.05)
         for (percentage in seq(10, 100, 10)) {
             end <- as.integer(length(deg_fc)/100*percentage)
             if (end <= 1) next
-            t <- enrichKEGG(as.character(as.integer(names(deg_fc)[1:end])), organism = "mmu", pvalueCutoff = kegg_threshold,
+            t <- enrichKEGG(as.character(as.integer(names(deg_fc)[1:end])), organism = spe, pvalueCutoff = kegg_threshold,
               pAdjustMethod = "BH", universe = names(deg_fc), minGSSize = 10, maxGSSize = 500, use_internal_data=TRUE, qvalueCutoff = 0.2)
             write(x=paste("#",percentage), file=file_name, append=append)
             append = T
@@ -72,6 +73,7 @@ computeKEGGEnrichment <- function(df, output_prefix, kegg_threshold=0.05)
 }
 
 
+
 enrichmentAnalysisKEGG <- function(gene_list,
                                    entrez_gene,
                                    fc,
@@ -80,6 +82,7 @@ enrichmentAnalysisKEGG <- function(gene_list,
                                    output_prefix,
                                    cpd=NULL,
                                    gene_style='Refseq',
+                                   organism=organism,
                                    kegg_target_file='kegg_target_id.txt') 
 {
     df <- data.frame(Gene=gene_list, Entrez=entrez_gene, FDR=-log10(fdr), Fc=fc, 
@@ -88,19 +91,22 @@ enrichmentAnalysisKEGG <- function(gene_list,
     df <- cbind(df, SignificantChange=getSignificantChange(df$Significance, df$Change))
     df <- filterMostSignificant(df, 'FDR', 'Fc', 'Gene', logFDR=TRUE)
 
+    spe <- "mmu"
+    if (organism == 'human') spe <- 'hsa'
     # All genes
     fc <- df$Fc
-    names(fc) =  df$Gene
-    plotKEGGPathway(fc, paste0(output_prefix, '_all'), gene_style, kegg_target_file, all=TRUE, cpd=cpd)
+    names(fc) =  removeVersionInfo(df$Gene)
+    plotKEGGPathway(fc, paste0(output_prefix, '_all'), gene_style, kegg_target_file, all=TRUE, cpd=cpd, species=spe)
     # DEG
     df$Fc[df$Significance == 'Non'] = 0
     fc <- df$Fc
-    names(fc) =  df$Gene
-    plotKEGGPathway(fc, output_prefix, gene_style, kegg_target_file, cpd=cpd)
+    names(fc) =  removeVersionInfo(df$Gene)
+    plotKEGGPathway(fc, output_prefix, gene_style, kegg_target_file, cpd=cpd, species=spe)
 
     df <- filterMostSignificant(df, 'FDR', 'Fc', 'Entrez', logFDR=TRUE)
     df <- df[!is.na(df$Entrez),]
-    computeKEGGEnrichment(df, output_prefix)
+
+    computeKEGGEnrichment(df, output_prefix, spe)
 }
 
 
@@ -109,17 +115,17 @@ enrichmentAnalysisEnrichR <- function(gene_list,
                                       fc,
                                       fdr,
                                       output_prefix,
-                                      threshold) 
+                                      threshold,
+                                      gene_style='Refseq') 
 {
     palette <- getColorPalette()
     df <- data.frame(Gene=gene_list, FDR=-log10(fdr), Fc=fc, 
                      Significance=sapply(fdr, getSignificanceLabels, threshold=threshold),
                      Change=sapply(fc, getFoldChangeLabels))
-    gene_style = 'Refseq'
-    df <- addRefseqDescription(df, gene_style, keep_gene_list_column=TRUE)
+    df <- addGeneDescription(df, gene_style, keep_gene_list_column=TRUE)
     df <- cbind(df, SignificantChange=getSignificantChange(df$Significance, df$Change))
     setEnrichrSite("Enrichr") # human or mouse genes
-    dbs_list <- c('KEGG_2021_Human', 'GTEx_Tissue_Expression_Up', 'GO_Biological_Process_2021')
+    dbs_list <- c('KEGG_2021_Human', 'GTEx_Tissue_Expression_Up', 'GO_Biological_Process_2021', 'ChEA_2022')
     for (change in c('up', 'down', 'change')) {
         if (change %in% c('up', 'down')) {
             gene_set <- unique(df$Symbol[df$SignificantChange == change])
@@ -127,6 +133,7 @@ enrichmentAnalysisEnrichR <- function(gene_list,
             gene_set <- unique(df$Symbol[df$SignificantChange != 'neutral'])
         }
         if (length(gene_set) == 0) next
+        gene_set <- mapMouse2Human(gene_set, mouse_origin=TRUE)
         enriched <- enrichr(gene_set, dbs_list)
         for (i in 1:length(dbs_list)) {
             db <- dbs_list[i]

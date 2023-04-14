@@ -12,7 +12,7 @@
     cont[control] <- -1
     cont[case] <- 1
     lrt <- glmLRT(fit, contrast=cont)
-    p <- topTags(lrt, n=100000) # Display all genes
+    p <- topTags(lrt, n=200000) # Display all genes
     if (nchar(header) > 0) {
         cat(paste0(header, "\n"),file=output_file)
     }
@@ -53,7 +53,7 @@
             if (is.null(df)) df <- temp_df
             else df <- merge(df, temp_df, by='Refseq', all=TRUE)
         }
-        df <- addRefseqDescription(df)
+        df <- addGeneDescription(df)
         write.table(df, file=output_file, sep='\t', quote=F)
     }
 }
@@ -71,12 +71,13 @@
                                    design,
                                    output_prefix='fold_change',
                                    output_suffix='.txt',
+                                   cpm_filtering_row=2,
                                    writeIntegrated=FALSE)
 {
     sizeFactors <- colSums(mat)
     group <- factor(design, levels=unique(design))
     y <- DGEList(counts=mat,group=group)
-    keep <- rowSums(cpm(y) > 1) >= 2 #Cpm filtering
+    keep <- rowSums(cpm(y) > 1) >= cpm_filtering_row #Cpm filtering
     y <- y[keep, , keep.lib.sizes=FALSE]
     y <- calcNormFactors(y)
     design_matrix <- model.matrix(~0+group, data=y$samples)
@@ -89,7 +90,7 @@
     for (control in 1:(group_total-1)) {
         for (case in (control+1):group_total) {
             .computeFoldChangeByedgeR(case, control, group_total, fit,
-                                      paste(output_prefix, '_', control, '_', case, output_suffix, sep=""),
+                                      paste0(output_prefix, '_', control, '_', case, output_suffix),
                                       header=paste("#", colnames(design_matrix)[case], 'vs', colnames(design_matrix)[control]))
         }
     }
@@ -140,11 +141,32 @@ readCpm <- function(input_file, style='edgeR')
     }
 }
 
-.getColumnIndex <- function(style) {
-    return(list(aidx=1, cidx=7))
+.getColumnIndex <- function(style, enhancer_flag=FALSE) {
+    if (style == 'featureCounts') {
+        return(list(aidx=1, cidx=7))
+    } else if (style == 'STAR') {
+        if (enhancer_flag) { # unstranded
+            return(list(aidx=1, cidx=2))
+        } else {
+            return(list(aidx=1, cidx=4))
+        }
+    } else if (style == 'bed') {
+        return(list(aidx=8, cidx=11))        
+    }
 }
 
-
+.readCountMatrix <- function(file, style, idx_list=NULL) {
+    if (style == 'featureCounts') {
+        df <- read.table(file, header=T)
+    } else if (style == 'STAR') {
+        df <- read.table(file, header=F)
+        df <- df[!(df[,idx_list$aidx] %in% c("N_unmapped", "N_multimapping", "N_noFeature", "N_ambiguous")),]
+    } else if (style == 'bed') {
+        df <- read.table(file, header=F, sep="\t")
+        colnames(df) <- c("chr", "start", "end", "activity", "gchr", "gstart", "gend", "Ensembl", "Symbol", "distance", "count")
+    }
+    return(df)
+}
 
 #' Convert count data for differential gene expression analysis
 #'
@@ -164,27 +186,40 @@ combineCountMatrix <- function(input_file='filelist.txt',
                                output_file='mat.txt',
                                style='featureCounts',
                                order=c(),
+                               enhancer_flag=FALSE,
                                verbose=TRUE)
 {
-    stopifnot(style == 'featureCounts')
-    idx_list = .getColumnIndex(style)
+    idx_list = .getColumnIndex(style, enhancer_flag)
     file_list = unlist(read.table(input_file, stringsAsFactors=F, header=F))
     mat <- NULL
+    amat <- NULL
     for (file in file_list) {
-        df <- read.table(file, header=T)
+        df <- .readCountMatrix(file, style, idx_list)
         if (is.null(mat)) {
             mat <- as.matrix(df[,idx_list$cidx])
         } else {
             mat <- cbind(mat, df[,idx_list$cidx])
         }
-        rownames(mat) <- df[,idx_list$aidx]
+        if (enhancer_flag) {
+            rownames(mat) <- paste0('region_', 1:dim(mat)[1])
+            amat <- df[,-c(idx_list$cidx)]
+            rownames(amat) <- rownames(mat)
+        } else {
+            rownames(mat) <- df[,idx_list$aidx]
+        }
     }
     colnames(mat) <- gsub('\\..*$', '', sapply(file_list, basename))
+    if (!is.null(amat)) {
+        amat <- amat[rowSums(mat) > 0, ]
+    }
     mat <- mat[rowSums(mat) > 0, ]
     if (length(order) > 0) {
         mat <- mat[,order]
     }
     write.table(mat, file=output_file)
+    if (!is.null(amat)) {
+        write.table(amat, file=gsub('.txt', '_annotation.txt', output_file))
+    }
     if (verbose) {
         print(head(mat))
     }
@@ -206,7 +241,9 @@ normalizeExpression <- function(input_file='mat.txt',
                                 normalization_method='edgeR',
                                 output_prefix='fold_change',
                                 output_suffix='.txt',
+                                ordered=c(),
                                 rep=3,
+                                cpm_filtering_row=2,
                                 verbose=TRUE)
 {
     mat <- read.table(input_file, header=T, stringsAsFactors = F)
@@ -222,22 +259,93 @@ normalizeExpression <- function(input_file='mat.txt',
         print(head(mat[,1:min(dim(mat)[2], 5)]))
         print(head(design))
     }
-    .normalizeCountByedgeR(mat, design, output_prefix=output_prefix, output_suffix=output_suffix, writeIntegrated=TRUE)
+    .normalizeCountByedgeR(mat, design, output_prefix=output_prefix, output_suffix=output_suffix, cpm_filtering_row=cpm_filtering_row, writeIntegrated=TRUE)
 }
 
+.concatenateMetaboMatrix <- function(input_file, annotation_columns, used_columns) {
+    mat <- NULL
+    amat <- NULL
+    for (file in unlist(read.table(input_file, header=F))) {
+        df <- read.table(file, header=T, sep=",", stringsAsFactors=F, quote="\"")
+        adf <- df[,annotation_columns]
+        df <- df[,used_columns]
+        rownames(df) = adf[,2]
+        df[df == "N.D."] <- 0
+        if (is.null(mat)) {
+            mat <- df
+            amat <- adf
+        } else {
+            mat <- rbind(mat, df)
+            amat <- rbind(amat, adf)
+        }
+    }
+    rownames(mat) <- as.character(rownames(mat))
+    return(list(data=mat, annotation=amat))
+}
 
-# CombineCountMatrix(input='# NormalizeExpression(input_)
-# group <- data.frame(con=factor(as.integer(0:(total_data-1)/3)+1))
-# CAGE and RNA-seq data
-# order = c(1:3, 7:9, 4:6, 10:12)
-# Others
-# order = c()
-# omethod <- c("protein", "metabolite")
-# sps <- c("")
+.normalizeCountByScaling <- function(mat,
+                                     annotation,
+                                     design,
+                                     output_prefix='fold_change',
+                                     output_suffix='.txt',
+                                     writeIntegrated=FALSE)
+{
+    sizeFactors <- colSums(mat)
+    print(head(mat))
+    print(head(design))
 
-# comp <- c(1, 3, 3, 4)
-# target <- c(2, 4, 1, 2)
-# fold_name <- "comp_WB"
+    # group <- factor(design, levels=unique(design))
+    # y <- DGEList(counts=mat,group=group)
+    # keep <- rowSums(cpm(y) > 1) >= 2 #Cpm filtering
+    # y <- y[keep, , keep.lib.sizes=FALSE]
+    # y <- calcNormFactors(y)
+    # design_matrix <- model.matrix(~0+group, data=y$samples)
+    # colnames(design_matrix) <- levels(y$samples$group)
+    # y <- estimateGLMCommonDisp(y,design_matrix)
+    # y <- estimateGLMTrendedDisp(y,design_matrix)
+    # y <- estimateGLMTagwiseDisp(y,design_matrix)
+    # fit <- glmFit(y, design_matrix)
+    # group_total <- length(unique(group))
+    # for (control in 1:(group_total-1)) {
+    #     for (case in (control+1):group_total) {
+    #         .computeFoldChangeByedgeR(case, control, group_total, fit,
+    #                                   paste(output_prefix, '_', control, '_', case, output_suffix, sep=""),
+    #                                   header=paste("#", colnames(design_matrix)[case], 'vs', colnames(design_matrix)[control]))
+    #     }
+    # }
+    if (writeIntegrated) {
+        print('write')
+        # .combineDEGMatrix(design, output_prefix, output_suffix)
+    }
+}
 
+normalizeMetabolome <- function(input_file='filelist.txt',
+                                 design_file='design_mat.txt',
+                                 output_file='mat_metabo.txt',
+                                 output_prefix='mfold_change',
+                                 output_suffix='.txt',
+                                 normalization_method='pca',
+                                 annotation_columns=1:2,
+                                 used_columns=6:31,
+                                 order_levels=NULL,
+                                 verbose=TRUE)
 
-
+{
+    result <- .concatenateMetaboMatrix(input_file, annotation_columns, used_columns)
+    write.table(cbind(result$annotation, result$data), output_file)
+    design <- read.table(design_file, header=F, sep=" ", row.names=NULL)[,1]
+    print(head(design))
+    mat <- result$data
+    mat <- mat[,!is.na(design)]
+    design <- design[!is.na(design)]
+    if (!is.null(order_levels)) {
+        mat <- mat[,order(factor(design, levels=order_levels))]
+        print(order(factor(design, levels=order_levels)))
+        design <- design[order(factor(design, levels=order_levels)),]
+    }
+    if (verbose) {
+        print(head(mat[,1:min(dim(mat)[2], 5)]))
+        print(head(design))
+    }
+    .normalizeCountByScaling(mat, result$annotation, design, output_prefix=output_prefix, output_suffix=output_suffix, writeIntegrated=TRUE)
+}

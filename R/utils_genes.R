@@ -4,10 +4,36 @@
     return(substring(x, 1, regexpr(",", x)-1))
 }
 
-extractGeneSet <- function(dir) {
+removeVersionInfo <- function(gene_list) {
+    return(sapply(gene_list, function(x) {unlist(strsplit(as.character(x), '\\.'))[1]}))
+}
+
+.convertMouse2Human <- function(x) {
+    # borrow from https://www.r-bloggers.com/2016/10/converting-mouse-to-human-gene-names-with-biomart-package/
+    human = useMart("ensembl", dataset = "hsapiens_gene_ensembl", host = "https://asia.ensembl.org")
+    mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl", host = "https://asia.ensembl.org")
+    genesV2 = getLDS(attributes = c("hgnc_symbol"), filters = "hgnc_symbol", values = x , mart = human, attributesL = c("mgi_symbol"), martL = mouse, uniqueRows=T)
+    humanx <- unique(genesV2[, 2])
+    return(humanx)
+}
+
+mapMouse2Human <- function(x, mouse_origin=TRUE) {
+    if (mouse_origin) {
+        m <- merge(data.frame(mouse=x), symbol_table, all.x=TRUE, by='mouse')
+        gene_set <- m$human
+    } else {
+        m <- merge(data.frame(human=x), symbol_table, all.x=TRUE, by='human')
+        gene_set <- m$mouse
+    }
+    return(gene_set[!is.na(gene_set)])
+}
+
+extractGeneSet <- function(dir, conversion=TRUE) {
     file_path <- list()
-    file_path[["LYSOSOME"]] = '~/project/GTP_RNA_seq/aws/Liver_data/ann/gene_set/lysosome/'
-    file_path[["AUTOPHAGY"]] = '~/project/GTP_RNA_seq/aws/Liver_data/ann/gene_set/autophagy/'
+    file_path[["LYSOSOME"]] = LYSOSOME
+    file_path[["AUTOPHAGY"]] = AUTOPHAGY
+    file_path[["LYSOTF"]] = LYSOTF
+    file_path[["REPROGRAMMING"]] = REPROGRAMMING
     pattern = 'geneset_.*.txt'
     gene_file_list <- c(list.files(file_path[[dir]], pattern=pattern), 'all')
     gene_list <- list()
@@ -16,30 +42,14 @@ extractGeneSet <- function(dir) {
             gene_list[[fname]] <- unique(unlist(gene_list))
         } else {
             gene_list[[fname]] <- read.table(file.path(file_path[[dir]], fname), header=T, stringsAsFactors=F)[,1]
+            gene_list[[fname]] <- unlist(sapply(gene_list[[fname]], function(x) {return(unlist(strsplit(toupper(x), ';')))}))
+            if (conversion) {
+                gene_list[[fname]] <- mapMouse2Human(gene_list[[fname]], conversion)
+            }
         }
-        gene_list[[fname]] <- unlist(sapply(gene_list[[fname]], function(x) {return(unlist(strsplit(toupper(x), ';')))}))
     }
     return(gene_list)
 }
-
-
-.storeRefseqData <- function() {
-    x <- read.table('~/project/GTP_RNA_seq/aws/Liver_data/ann/refseq_description.txt', header=F, colClasses=c("character", "character", "character"))
-    colnames(x) <- c("Gene", "Symbol", "Description")
-    refseq_description = x
-    use_data(refseq_description, internal=TRUE, overwrite=T)
-}
-
-addRefseqDescription <- function(gene_matrix, gene_style='Refseq', rowname_column='Gene', keep_gene_list_column=FALSE) {
-    stopifnot(gene_style == 'Refseq')
-    colnames(gene_matrix)[1] = "Gene"
-    merged <- merge(refseq_description, gene_matrix, by='Gene', all.y=TRUE)
-    rownames(merged) <- merged$rowname_column
-    if (!keep_gene_list_column)
-        merged <- merged[,colnames(merged) != rowname_column]
-    return(merged)
-}
-
 
 extractMappedFoldChange <- function(fold_change, gene_list) {
     selected_change <- as.numeric(fold_change)
@@ -47,25 +57,20 @@ extractMappedFoldChange <- function(fold_change, gene_list) {
     return(selected_change[!(names(selected_change) == "NULL" || is.na(selected_change))])
 }
 
-#' @import org.Mm.eg.db
-
-ref2entr <- function(gene_list, gene_style = "")
-{
-    gene_list <- as.character(gene_list)
-    gene_list <- lapply(gene_list, .extractFirstGene)
-    if (gene_style == "Ensembl") {
-        x <- org.Mm.egENSEMBL2EG
-    } else if (gene_style == "Refseq" || gene_style == "") {
-        x <- org.Mm.egREFSEQ2EG
-    } else if (gene_style == "Entrez") {
-        return(lapply(gene_list, function(x) {return(x)}))
-    } else {
-        stopifnot(FALSE)
+addGeneDescription <- function(gene_matrix, gene_style='Refseq', rowname_column='Gene', keep_gene_list_column=FALSE) {
+    if (gene_style == 'Refseq') {
+        return(.addRefseqDescription(gene_matrix, gene_style, rowname_column, keep_gene_list_column))
+    } else if (gene_style %in% c('t2t', 'Ensembl')) {
+        return(.addEnsemblDescription(gene_matrix, gene_style, rowname_column, keep_gene_list_column))
     }
-    # Get the entrez gene identifiers that are mapped to any RefSeq ID
-    mapped_genes <- mappedkeys(x)
-    # Convert to a list
-    xx <- x[mapped_genes]
-    xx <- as.list(xx)
-    return(lapply(gene_list, function(x) {return(xx[[x]])}))
+    stopifnot(FALSE)
+}
+
+obtainEnhancerName <- function(enhancer_id, gene_id) {
+    return(sapply(1:length(enhancer_id), function(x) {
+        if (!is.na(gene_id[x]))
+            return(paste0(enhancer_id[x], '_', gene_id[x]))
+        else
+            return(enhancer_id[x])
+    }))
 }
