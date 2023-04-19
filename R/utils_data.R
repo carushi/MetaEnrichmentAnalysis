@@ -150,8 +150,10 @@ readCpm <- function(input_file, style='edgeR')
         } else {
             return(list(aidx=1, cidx=4))
         }
-    } else if (style == 'bed') {
+    } else if (style == 'enhancer') {
         return(list(aidx=8, cidx=11))        
+    } else if (style == 'bed') {
+        return(list(aidx=4, cidx=11))
     }
 }
 
@@ -161,9 +163,12 @@ readCpm <- function(input_file, style='edgeR')
     } else if (style == 'STAR') {
         df <- read.table(file, header=F)
         df <- df[!(df[,idx_list$aidx] %in% c("N_unmapped", "N_multimapping", "N_noFeature", "N_ambiguous")),]
-    } else if (style == 'bed') {
+    } else if (style == 'enhancer') {
         df <- read.table(file, header=F, sep="\t")
         colnames(df) <- c("chr", "start", "end", "activity", "gchr", "gstart", "gend", "Ensembl", "Symbol", "distance", "count")
+    } else if (style == 'bed') {
+        df <- read.table(file, header=F, sep="\t")
+        colnames(df) <- c("chr", "start", "end", "name", "score", "strand", "group2", "group3", "score2", "score3", "count")
     }
     return(df)
 }

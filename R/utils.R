@@ -96,12 +96,16 @@ plotMDplot <- function(cpm, fc, fdr, output_header, threshold=0.05) {
 
 
 #' @import ggplot2 cowplot
-plotVolcano <- function(gene_list, fc, fdr, output_header, threshold=0.05, xrange=NULL, yrange=NULL, gene_style='Refseq') {
+plotVolcano <- function(gene_list, fc, fdr, output_header, threshold=0.05, xrange=NULL, yrange=NULL, gene_style='Refseq', symbol=NULL) {
     palette <- getColorPalette()
     df <- data.frame(Gene=gene_list, FDR=-log10(fdr), Fc=fc, 
                      Significance=sapply(fdr, getSignificanceLabels, threshold=threshold),
                      Change=sapply(fc, getFoldChangeLabels))
-    df <- addGeneDescription(df, gene_style, keep_gene_list_column=TRUE)
+    if (is.null(symbol)) {
+        df <- addGeneDescription(df, gene_style, keep_gene_list_column=TRUE)
+    } else {
+        df <- cbind(df, Symbol=symbol)
+    }
     df <- cbind(df, SignificantChange=getSignificantChange(df$Significance, df$Change))
     g <- ggplot(df, aes(x=Fc, y=FDR, color=SignificantChange, alpha=Significance))
     g <- g+geom_point()
@@ -113,21 +117,24 @@ plotVolcano <- function(gene_list, fc, fdr, output_header, threshold=0.05, xrang
     pdf(paste0('volcano_', output_header, '.pdf'))
     plot(g)
     dev.off()
+
+    g <- ggplot()
+    g <- g+geom_point(data=df, aes(x=Fc, y=FDR, color=SignificantChange), color='grey')
     if (any(colnames(df) == 'Symbol')) {
         df$Symbol[df$'Symbol' == '<NA>'] <- '-'
-        g <- ggplot()
-        g <- g+geom_point(data=df, aes(x=Fc, y=FDR, color=SignificantChange), color='grey')
         g <- g+geom_text(data=subset(df, df$Significance == 'Significant'), aes(x=Fc, y=FDR, label=Symbol, color=SignificantChange))
-        g <- g+scale_color_manual(values=c("up"=palette[["red"]], "down"=palette[["blue"]], "neutral"="grey"))
-        g <- g+theme_half_open()
-        g <- g+xlab("Log2 fold change")+ylab("FDR")
-        g <- g+geom_hline(yintercept=-log10(threshold), linetype="dashed")
-        if (!is.null(yrange)) g <- g+ylim(yrange)
-        if (!is.null(xrange)) g <- g+ylim(xrange)
-        pdf(paste0('volcano_wt_', output_header, ".pdf"))
-        plot(g)
-        dev.off()
+    } else {
+        g <- g+geom_text(data=subset(df, df$Significance == 'Significant'), aes(x=Fc, y=FDR, label=Gene, color=SignificantChange))
     }
+    g <- g+scale_color_manual(values=c("up"=palette[["red"]], "down"=palette[["blue"]], "neutral"="grey"))
+    g <- g+theme_half_open()
+    g <- g+xlab("Log2 fold change")+ylab("FDR")
+    g <- g+geom_hline(yintercept=-log10(threshold), linetype="dashed")
+    if (!is.null(yrange)) g <- g+ylim(yrange)
+    if (!is.null(xrange)) g <- g+ylim(xrange)
+    pdf(paste0('volcano_wt_', output_header, ".pdf"))
+    plot(g)
+    dev.off()
     writeVolcanoTopGenes(paste0('top_gene_', output_header), df, gene_style)
 }
 
@@ -137,12 +144,16 @@ plotVolcano <- function(gene_list, fc, fdr, output_header, threshold=0.05, xrang
     return(count_data)
 }
 
-plotVolcanoGeneSet <- function(gene_list, fc, fdr, output_header, gene_set_list, gene_style='Refseq', threshold=0.05, xrange=NULL, yrange=NULL, organism='mouse', verbose=TRUE) {
+plotVolcanoGeneSet <- function(gene_list, fc, fdr, output_header, gene_set_list, gene_style='Refseq', threshold=0.05, xrange=NULL, yrange=NULL, organism='mouse', symbol=NULL, verbose=TRUE) {
     palette <- getColorPalette()
     df <- data.frame(Gene=gene_list, FDR=-log10(fdr), Fc=fc, 
                      Significance=sapply(fdr, getSignificanceLabels, threshold=threshold),
                      Change=sapply(fc, getFoldChangeLabels))
-    df <- addGeneDescription(df, gene_style, keep_gene_list_column=TRUE)
+    if (is.null(symbol)) {
+        df <- addGeneDescription(df, gene_style, keep_gene_list_column=TRUE)
+    } else {
+        df <- cbind(df, Symbol=symbol)
+    }
     df$Symbol <- sapply(df$Symbol, toupper)
     df <- cbind(df, SignificantChange=getSignificantChange(df$Significance, df$Change))
     for (gene_set_series in gene_set_list) {
@@ -153,9 +164,11 @@ plotVolcanoGeneSet <- function(gene_list, fc, fdr, output_header, gene_set_list,
         }
         for (gene_set_file in names(symbol_vectors)) {
             header <- gsub('\\.txt', '', gsub('geneset_', '', gene_set_file))
+            sub_df <- subset(df, df$Symbol %in% symbol_vectors[[gene_set_file]])
+            if (dim(sub_df)[1] == 0) next
             g <- ggplot(df, aes(x=Fc, y=FDR, alpha=Significance))
             g <- g+geom_point(color='grey')
-            g <- g+geom_point(data=subset(df, df$Symbol %in% symbol_vectors[[gene_set_file]]), aes(x=Fc, y=FDR, color=Change))
+            g <- g+geom_point(data=sub_df, aes(x=Fc, y=FDR, color=Change))
             g <- g+scale_color_manual(values=c("up"=palette[["red"]], "down"=palette[["blue"]], "neutral"="grey"))
             g <- g+scale_alpha_manual(values=c("Significant"=1.0, "Non"=0.3))
             g <- g+theme_half_open()
@@ -166,7 +179,7 @@ plotVolcanoGeneSet <- function(gene_list, fc, fdr, output_header, gene_set_list,
             dev.off()            
             g <- ggplot()
             g <- g+geom_point(data=df, aes(x=Fc, y=FDR, color=SignificantChange), color='grey')
-            g <- g+geom_text(data=subset(df, df$Symbol %in% symbol_vectors[[gene_set_file]]), aes(x=Fc, y=FDR, label=Symbol, color=Change))
+            g <- g+geom_text(data=sub_df, aes(x=Fc, y=FDR, label=Symbol, color=Change))
             g <- g+scale_color_manual(values=c("up"=palette[["red"]], "down"=palette[["blue"]], "neutral"="grey"))
             g <- g+theme_half_open()
             g <- g+xlab("Log2 fold change")+ylab("FDR")
@@ -177,7 +190,7 @@ plotVolcanoGeneSet <- function(gene_list, fc, fdr, output_header, gene_set_list,
             plot(g)
             dev.off()
             stats_table <- .countChangeType(df, 'all')
-            stats_table <- rbind(stats_table, .countChangeType(df[df$Symbol %in% symbol_vectors[[gene_set_file]],], gene_set_series))
+            stats_table <- rbind(stats_table, .countChangeType(sub_df, gene_set_series))
             print(stats_table)
             write.table(stats_table, paste0('sigchange_', output_header, '_', gene_set_series, '_', header, '.txt'))
             stats_table <- stats_table[stats_table[,'Var1'] != 'neutral',]

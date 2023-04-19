@@ -52,28 +52,35 @@ pathwayEnrichmentAnalysis <- function(gene_list,
     }
 }
 
-analyzeSingleComparisonData <- function(file_name, output_suffix, gene_style, gene_set, organism, output_annotation_file='') {
+analyzeSingleComparisonData <- function(file_name, output_suffix, gene_style, gene_set, organism, output_annotation_file='', gene_annotation_flag=TRUE) {
     mat <- read.table(file_name, header=T, sep=" ", stringsAsFactors=F)
+    symbol <- NULL
     if (output_annotation_file == '') {
         refseq_gene <- rownames(mat)
-        volcano_gene <- refseq_gene
         entrez_gene <- ref2entr(refseq_gene, gene_style=gene_style)
     } else {
-        amat <- read.table(output_annotation_file, header=T, sep=" ", stringsAsFactors=F)
+        amat <- read.table(output_annotation_file, header=T, sep=" ", stringsAsFactors=F, row.names=1)
         amat <- amat[rownames(mat),]
-        refseq_gene <- amat[,'Ensembl']
-        volcano_gene <- obtainEnhancerName(rownames(mat), amat[,'Symbol'])
-        entrez_gene <- ref2entr(refseq_gene, gene_style=gene_style)
+        if (any(colnames(amat) == 'Ensembl')) {
+            refseq_gene <- amat[,'Ensembl']
+            entrez_gene <- ref2entr(refseq_gene, gene_style=gene_style)
+        } else {
+            refseq_gene <- amat[,'name']
+            entrez_gene <- NULL
+        }
+        symbol <- amat[,"group3"]
     }
     fc <- .filterFoldChange(mat[,'logFC'])
     cpm <- mat[,'logCPM']
     fdr <- .filterFDR(mat[,'FDR'])
     output_header <- gsub(output_suffix, '', file_name)
-    plotVolcano(refseq_gene, fc, fdr, output_header, threshold=0.05, gene_style=gene_style)
-    plotVolcanoGeneSet(refseq_gene, fc, fdr, output_header, gene_set, threshold=0.05, gene_style=gene_style, organism=organism)
     plotMDplot(cpm, fc, fdr, output_header, threshold=0.05)
-    pathwayEnrichmentAnalysis(refseq_gene, entrez_gene, fc, fdr, 0.05, output_header, type='EnrichR', gene_style=gene_style)
-    pathwayEnrichmentAnalysis(refseq_gene, entrez_gene, fc, fdr, 0.05, output_header, type='KEGG', gene_style=gene_style, organism=organism)
+    plotVolcano(refseq_gene, fc, fdr, output_header, threshold=0.05, gene_style=gene_style, symbol=symbol)
+    if (gene_annotation_flag) {
+        plotVolcanoGeneSet(refseq_gene, fc, fdr, output_header, gene_set, threshold=0.05, gene_style=gene_style, organism=organism, symbol=symbol)
+        pathwayEnrichmentAnalysis(refseq_gene, entrez_gene, fc, fdr, 0.05, output_header, type='EnrichR', gene_style=gene_style)
+        pathwayEnrichmentAnalysis(refseq_gene, entrez_gene, fc, fdr, 0.05, output_header, type='KEGG', gene_style=gene_style, organism=organism)
+    }
 }
 
 
@@ -94,6 +101,7 @@ enrichmentAnalysis <- function(input_file='filelist.txt',
                                gene_style='Refseq',
                                gene_set=c('LYSOSOME', 'AUTOPHAGY', 'LYSOTF'),
                                enhancer_flag=FALSE,
+                               gene_annotation=TRUE,
                                verbose=TRUE)
 {
     output_prefix <- "fold_change"
@@ -106,7 +114,7 @@ enrichmentAnalysis <- function(input_file='filelist.txt',
         output_file <- paste0("mat_", output_middle, ".txt")
         output_annotation_file <- gsub('.txt', '_annotation.txt', output_file)
     }
-    if (!file.exists(output_file)) {
+    if (!file.exists(output_file) || TRUE) {
         combineCountMatrix(input_file=input_file,
                            output_file=output_file,
                            style=style,
@@ -115,7 +123,7 @@ enrichmentAnalysis <- function(input_file='filelist.txt',
                            verbose=TRUE)
     }
     pattern <- paste0('^', output_prefix, '_[0-9].*\\', output_suffix)
-    if (length(list.files('./', pattern=pattern)) == 0) {
+    if (length(list.files('./', pattern=pattern)) == 0 || TRUE) {
         normalizeExpression(input_file=output_file,
                             output_prefix=output_prefix,
                             output_suffix=output_suffix,
@@ -130,7 +138,7 @@ enrichmentAnalysis <- function(input_file='filelist.txt',
         if (verbose) {
             message(paste("-- Reading...", file_name))
         }
-        analyzeSingleComparisonData(file_name, output_suffix, gene_style, gene_set, organism, output_annotation_file)
+        analyzeSingleComparisonData(file_name, output_suffix, gene_style, gene_set, organism, output_annotation_file, gene_annotation)
     }
     # pattern <- paste0('^', output_prefix, '_log.*')
     # fc_file_list <- list.files('./', pattern=pattern)
